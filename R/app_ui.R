@@ -3,14 +3,28 @@
 #' @param request Internal parameter for `{shiny}`.
 #'     DO NOT REMOVE.
 #' @import shiny
+#' @importFrom bslib page_sidebar sidebar navset_card_underline nav_panel
 #' @noRd
 app_ui <- function(request) {
   tagList(
     # Leave this function for adding external resources
     golem_add_external_resources(),
     # Your application UI logic
-    fluidPage(
-      golem::golem_welcome_page() # Remove this line to start building your UI
+    page_sidebar(
+      sidebar = sidebar(
+        mod_zotero_account_ui("zotero_account_1")
+      ),
+      navset_card_underline(
+        nav_panel(
+          title = "Collections",
+          mod_collections_ui("collections_1")
+        ),
+        nav_panel(
+          title = "Items",
+          mod_items_ui("items_1")
+        )
+      ),
+      # golem::golem_welcome_page() # Remove this line to start building your UI
     )
   )
 }
