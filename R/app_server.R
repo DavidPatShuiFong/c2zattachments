@@ -8,9 +8,9 @@ app_server <- function(input, output, session) {
   # Your application server logic
 
   # Zotero API user ID and key
-  mod_zotero_account_server("zotero_account_1")
+  credentials <- mod_zotero_account_server("zotero_account_1")
   # choose from list of collections
-  mod_collections_server("collections_1")
+  selected_collections <- mod_collections_server("collections_1", credentials)
   # choose from list of items within selected collections, download attachments
-  mod_items_server("items_1")
+  mod_items_server("items_1", credentials, selected_collections)
 }

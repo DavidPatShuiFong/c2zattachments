@@ -1,8 +1,9 @@
 testServer(
   mod_items_server,
-  # Add here your module params
-  args = list()
-  , {
+  args = list(
+    credentials = reactive(data.frame(UserID = NA_real_, APIKey = "")),
+    selected_collections = reactive(NULL)
+  ), {
     ns <- session$ns
     expect_true(
       inherits(ns, "function")
@@ -25,7 +26,7 @@ testServer(
     # - Testing output
     # expect_true(inherits(output$tbl$html, "html"))
 })
- 
+
 test_that("module ui works", {
   ui <- mod_items_ui(id = "test")
   golem::expect_shinytaglist(ui)
@@ -35,4 +36,4 @@ test_that("module ui works", {
     expect_true(i %in% names(fmls))
   }
 })
- 
+

@@ -12,7 +12,7 @@ mod_items_ui <- function(id) {
   ns <- NS(id)
   tagList(
     downloadButton(
-      outputId = "DownloadAttachments",
+      outputId = ns("DownloadAttachments"),
       label = "Download Attachments"
     ),
     reactableOutput(
@@ -25,43 +25,92 @@ mod_items_ui <- function(id) {
 #'
 #' @noRd
 #'
-#' @importFrom reactable renderReactable reactable colDef
-#' @importFrom dplyr select left_join
+#' @importFrom shiny reactive req validate need downloadHandler
+#' @importFrom reactable renderReactable reactable colDef getReactableState
+#' @importFrom dplyr select left_join filter
+#' @importFrom httr GET add_headers status_code content
 
-mod_items_server <- function(id){
+mod_items_server <- function(id, credentials, selected_collections){
   moduleServer(id, function(input, output, session){
     ns <- session$ns
 
+    user_library <- reactive({
+      if (isTRUE(golem::get_golem_options("local"))) {
+        readRDS(app_sys("user.library.copy.example.RData"))
+      } else {
+        creds <- credentials()
+        keys <- selected_collections()
+        req(!is.na(creds$UserID), nchar(creds$APIKey) > 0, length(keys) > 0)
+        results_list <- lapply(keys, function(key) {
+          zotero <- tryCatch(
+            c2z::Zotero(
+              id = as.character(creds$UserID),
+              api = creds$APIKey,
+              collection.key = key,
+              get.collections = FALSE,
+              get.items = TRUE
+            ),
+            error = function(e) {
+              validate(need(FALSE, paste("Zotero error:", conditionMessage(e))))
+            }
+          )
+          results <- tryCatch(
+            c2z::ZoteroLibrary(zotero),
+            error = function(e) {
+              validate(need(FALSE, paste("Zotero error:", conditionMessage(e))))
+            }
+          )
+          results$results
+        })
+        dplyr::bind_rows(results_list)
+      }
+    })
+
+    item_dataframe <- reactive({
+      lib <- user_library()
+      attachments <- lib |>
+        dplyr::filter(itemType == "attachment") |>
+        dplyr::filter(contentType == "application/pdf") |>
+        dplyr::select(key, parentItem, filename) |>
+        dplyr::left_join(
+          lib |> dplyr::select(key, title),
+          # replace the attachment title with the 'parent' title
+          by = dplyr::join_by(parentItem == key)
+        )
+      if (is.null(attachments) || nrow(attachments) == 0) {
+        return(data.frame(
+          Key = character(),
+          ParentKey = character(),
+          Title = character(),
+          Filename = character()
+        ))
+      }
+      data.frame(
+        Key = attachments$key,
+        ParentKey = attachments$parentItem,
+        Title = attachments$title,
+        Filename = attachments$filename
+      )
+    })
+
     selected <- reactive(getReactableState("items", "selected"))
 
-    if (isTRUE(golem::get_golem_options("local"))) {
-      # is starting with 'run_app(local = TRUE)' then load test data
-      user.library.collection <- readRDS(app_sys("user.library.collection.example.RData"))
-      user.library.copy <- readRDS(app_sys("user.library.copy.example.RData"))
-      item_dataframe <- data.frame(
-        Key = user.library.copy$attachments$key,
-        ParentKey = user.library.copy$attachments$parentItem,
-        Title = user.library.copy$attachments |>
-          select(parentItem) |>
-          left_join(
-            user.library.copy$items |> select(key, title),
-            by = c("parentItem" = "key")
-          ) |>
-          select(title),
-        Filename = user.library.copy$attachments$filename
-      )
-    } else {
-      item_dataframe <- data.frame(
-        Key = character(),
-        ParentKey = character(),
-        Title = character(),
-        Filename = character()
-      )
-    }
-
     output$items <- renderReactable({
+      if (!isTRUE(golem::get_golem_options("local"))) {
+        creds <- credentials()
+        validate(
+          need(
+            !is.na(creds$UserID) && nchar(creds$APIKey) > 0,
+            "Enter your Zotero credentials in the sidebar."
+          ),
+          need(
+            length(selected_collections()) > 0,
+            "Select one or more collections in the Collections tab to load items."
+          )
+        )
+      }
       reactable(
-        item_dataframe,
+        item_dataframe(),
         selection = "multiple",
         columns = list(
           Key = colDef(minWidth = 50),
@@ -70,12 +119,56 @@ mod_items_server <- function(id){
       )
     })
 
-    # possible code to write all attachments in the user.library.copy list
-    # for (i in seq_len(nrow(user.library.copy$attachments))) {
-    #   content <- user.library.copy$attachments[i,]$file[[1]]$content
-    #   filename <- user.library.copy$attachments[i,]$filename[[1]]
-    #   writeBin(content, con = filename)
-    # }
+    output$DownloadAttachments <- downloadHandler(
+      filename = function() "attachments.zip",
+      content = function(file) {
+        idx <- selected()
+        req(!is.null(idx), length(idx) > 0)
+
+        rows <- item_dataframe()[idx, ]
+
+        tmp_dir <- tempfile()
+        dir.create(tmp_dir)
+        on.exit(unlink(tmp_dir, recursive = TRUE), add = TRUE)
+
+        if (isTRUE(golem::get_golem_options("local"))) {
+          lib_att <- user_library()$attachments
+          keys <- rows$Key
+          filenames <- rows$Filename
+          for (i in seq_along(keys)) {
+            row_match <- which(lib_att$key == keys[[i]])
+            if (length(row_match) == 0) next
+            writeBin(
+              lib_att$file[[row_match]]$content,
+              file.path(tmp_dir, filenames[[i]])
+            )
+          }
+        } else {
+          creds <- credentials()
+          base_url <- paste0(
+            "https://api.zotero.org/users/",
+            as.character(creds$UserID),
+            "/items/"
+          )
+          invisible(apply(rows, 1, function(row) {
+            response <- GET(
+              paste0(base_url, row[["Key"]], "/file"),
+              add_headers("Zotero-API-Key" = creds$APIKey)
+            )
+            if (status_code(response) == 200) {
+              writeBin(
+                content(response, as = "raw"),
+                file.path(tmp_dir, row[["Filename"]])
+              )
+            }
+          }))
+        }
+
+        old_wd <- setwd(tmp_dir)
+        on.exit(setwd(old_wd), add = TRUE)
+        utils::zip(file, files = list.files(tmp_dir))
+      }
+    )
 
   })
 }

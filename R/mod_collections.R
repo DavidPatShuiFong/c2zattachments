@@ -21,31 +21,55 @@ mod_collections_ui <- function(id) {
 #'
 #' @noRd
 #'
+#' @importFrom shiny reactive req validate need
 #' @importFrom reactable reactable renderReactable getReactableState
-mod_collections_server <- function(id){
+mod_collections_server <- function(id, credentials){
   moduleServer(id, function(input, output, session){
     ns <- session$ns
 
-    selected <- reactive(getReactableState("collections", "selected"))
-
-    if (isTRUE(golem::get_golem_options("local"))) {
-      # is starting with 'run_app(local = TRUE)' then load test data
-      user.library <- readRDS(app_sys("user.library.example.RData"))
-      collection_dataframe <- data.frame(
+    collection_dataframe <- reactive({
+      if (isTRUE(golem::get_golem_options("local"))) {
+        user.library <- readRDS(app_sys("user.library.example.RData"))
+      } else {
+        creds <- credentials()
+        req(!is.na(creds$UserID), nchar(creds$APIKey) > 0)
+        user.library <- tryCatch(
+          c2z::Zotero(
+            id = as.character(creds$UserID),
+            api = creds$APIKey,
+            library = TRUE,
+            get.collections = TRUE,
+            get.items = FALSE
+          ),
+          error = function(e) {
+            validate(need(FALSE, paste("Zotero error:", conditionMessage(e))))
+          }
+        )
+      }
+      data.frame(
         Collection = user.library$collections$name,
         Key = user.library$collections$key
       )
-    } else {
-      collection_dataframe <- data.frame(
-        Collection = character(),
-        Key = character()
-      )
-    }
-
-    output$collections <- renderReactable({
-      reactable(collection_dataframe, selection = "multiple")
     })
 
+    selected_keys <- reactive({
+      idx <- getReactableState("collections", "selected")
+      if (is.null(idx)) return(NULL)
+      collection_dataframe()[idx, "Key"]
+    })
+
+    output$collections <- renderReactable({
+      if (!isTRUE(golem::get_golem_options("local"))) {
+        creds <- credentials()
+        validate(need(
+          !is.na(creds$UserID) && nchar(creds$APIKey) > 0,
+          "Enter your Zotero User ID and API key in the sidebar to load your collections."
+        ))
+      }
+      reactable(collection_dataframe(), selection = "multiple")
+    })
+
+    return(selected_keys)
   })
 }
 

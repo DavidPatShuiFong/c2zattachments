@@ -32,12 +32,12 @@ mod_zotero_account_ui <- function(id) {
     numericInput(
       inputId = ns("UserID"),
       label = "User ID",
-      value = NULL,
+      value = NA,
       min = 0
     ),
     passwordInput(
-      inputId = ns("UserPassword"),
-      label = "User Password",
+      inputId = ns("APIKey"),
+      label = "API Key",
       placeholder = "Enter here..."
     ),
     hr(
@@ -65,26 +65,25 @@ mod_zotero_account_ui <- function(id) {
 #'
 #' @noRd
 #'
-#' @importFrom shiny observeEvent
+#' @importFrom shiny observeEvent updateTextInput
 mod_zotero_account_server <- function(id){
   moduleServer(id, function(input, output, session){
     ns <- session$ns
 
     observeEvent(
       input$UserID,
-      # initialize UserID if environment variable ZOTERO_USER is defined
+      # initialize credentials from environment variables on first load
       ignoreNULL = FALSE,
       ignoreInit = FALSE,
       once = TRUE,
       {
         UserID <- Sys.getenv("ZOTERO_USER")
         if (nchar(UserID) > 0) {
-          # if not an empty string
-          # no check if UserID is valid
-          updateNumericInput(
-            inputId = "UserID",
-            value = UserID
-          )
+          updateNumericInput(inputId = "UserID", value = UserID)
+        }
+        APIKey <- Sys.getenv("ZOTERO_API")
+        if (nchar(APIKey) > 0) {
+          updateTextInput(inputId = "APIKey", value = APIKey)
         }
       }
     )
@@ -93,7 +92,7 @@ mod_zotero_account_server <- function(id){
     dataframe <- reactive({
       data.frame(
         UserID = input$UserID,
-        UserPassword = input$UserPassword,
+        APIKey = input$APIKey
       )
     })
 
